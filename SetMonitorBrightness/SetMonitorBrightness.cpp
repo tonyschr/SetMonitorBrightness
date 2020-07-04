@@ -3,6 +3,28 @@
 
 HINSTANCE g_hInstance = nullptr;
 
+struct PHYSICAL_MONITOR_INFO
+{
+    HANDLE hPhysicalMonitor;
+    DWORD minimumBrightness;
+    DWORD maximumBrightness;
+    DWORD currentBrightness;
+    std::wstring description;
+};
+
+void DebugLog(const WCHAR* formatString, ...)
+{
+#ifdef _DEBUG
+    va_list argList;
+    va_start(argList, formatString);
+    WCHAR debug[256] = {};
+    _vsnwprintf_s(debug, ARRAYSIZE(debug), formatString, argList);
+    OutputDebugString(debug);
+    OutputDebugString(L"\r\n");
+    va_end(argList);
+#endif // DEBUG
+}
+
 void ShowMessage(int resourceId)
 {
     WCHAR caption[128];
@@ -12,17 +34,6 @@ void ShowMessage(int resourceId)
     {
         MessageBox(nullptr, message, caption, MB_OK);
     }
-}
-
-BOOL CALLBACK RecordMonitorProc(
-    HMONITOR monitor,
-    HDC hdc,
-    LPRECT rect,
-    LPARAM lParam)
-{
-    std::vector<HMONITOR>* monitors = reinterpret_cast<std::vector<HMONITOR>*>(lParam);
-    monitors->push_back(monitor);
-    return true;
 }
 
 DWORD GetRequestedBrightness()
@@ -39,29 +50,27 @@ DWORD GetRequestedBrightness()
     return 0;
 }
 
-int APIENTRY wWinMain(
-    HINSTANCE hInstance,
-    HINSTANCE hPrevInstance,
-    LPWSTR    lpCmdLine,
-    int       nCmdShow)
+BOOL CALLBACK RecordMonitorProc(
+    HMONITOR monitor,
+    HDC hdc,
+    LPRECT rect,
+    LPARAM lParam)
 {
-    g_hInstance = hInstance;
-    SetProcessDpiAwareness(PROCESS_PER_MONITOR_DPI_AWARE);
+    std::vector<HMONITOR>* monitors = reinterpret_cast<std::vector<HMONITOR>*>(lParam);
+    monitors->push_back(monitor);
+    return true;
+}
 
-    DWORD newBrightness = GetRequestedBrightness();
-    if (newBrightness < 10)
-    {
-        // Unreasonably dim. Ideally this should compare against the monitor's capabilities.
-        ShowMessage(IDS_ERROR_USAGE);
-        return 0;
-    }
+std::vector<PHYSICAL_MONITOR_INFO> GetAllPhysicalMonitors()
+{
+    std::vector<PHYSICAL_MONITOR_INFO> physicalMonitorInfos;
 
     std::vector<HMONITOR> monitors;
     if (!EnumDisplayMonitors(nullptr, nullptr, RecordMonitorProc, reinterpret_cast<LPARAM>(&monitors)))
     {
-        return 0;
+        return physicalMonitorInfos;
     }
-    
+
     for (const auto& monitor : monitors)
     {
         DWORD cMonitors = 0;
@@ -76,18 +85,66 @@ int APIENTRY wWinMain(
                     DWORD currentBrightness = 0;
                     DWORD maximumBrightness = 0;
 
-                    if (GetMonitorBrightness(physicalMonitors[i].hPhysicalMonitor, &minimumBrightness, &currentBrightness, &maximumBrightness))
+                    // Note: We currently don't use GetMonitorCapabilities; we just expect this to
+                    // fail on any monitors that don't support adjusting the brightness and continue
+                    // on.
+                    if (GetMonitorBrightness(physicalMonitors[i].hPhysicalMonitor, 
+                        &minimumBrightness, 
+                        &currentBrightness, 
+                        &maximumBrightness))
                     {
-                        if (newBrightness >= minimumBrightness && newBrightness <= maximumBrightness)
-                        {
-                            SetMonitorBrightness(physicalMonitors[i].hPhysicalMonitor, newBrightness);
-                        }
+                        PHYSICAL_MONITOR_INFO monitorInfo = {};
+                        monitorInfo.hPhysicalMonitor = physicalMonitors[i].hPhysicalMonitor;
+                        monitorInfo.minimumBrightness = minimumBrightness;
+                        monitorInfo.maximumBrightness = maximumBrightness;
+                        monitorInfo.currentBrightness = currentBrightness;
+                        monitorInfo.description = physicalMonitors[i].szPhysicalMonitorDescription;
+                        physicalMonitorInfos.push_back(monitorInfo);
                     }
                 }
             }
 
             delete[] physicalMonitors;
         }
+    }
+
+    return physicalMonitorInfos;
+}
+
+void SetBrightnessForAllMonitors(DWORD newBrightness)
+{
+    std::vector<PHYSICAL_MONITOR_INFO> physicalMonitorInfos = GetAllPhysicalMonitors();
+    for (const auto& physicalMonitorInfo : physicalMonitorInfos)
+    {
+        DebugLog(L"Monitor=%s, minBrightness=%d, maxBrightness=%d, currentBrightness=%d",
+            physicalMonitorInfo.description.c_str(), 
+            physicalMonitorInfo.minimumBrightness, 
+            physicalMonitorInfo.maximumBrightness, 
+            physicalMonitorInfo.currentBrightness);
+        SetMonitorBrightness(physicalMonitorInfo.hPhysicalMonitor, newBrightness);
+    }
+}
+
+int APIENTRY wWinMain(
+    HINSTANCE hInstance,
+    HINSTANCE hPrevInstance,
+    LPWSTR    lpCmdLine,
+    int       nCmdShow)
+{
+    g_hInstance = hInstance;
+    SetProcessDpiAwareness(PROCESS_PER_MONITOR_DPI_AWARE);
+
+    DWORD newBrightness = GetRequestedBrightness();
+    if (newBrightness >= 10)
+    {
+        SetBrightnessForAllMonitors(newBrightness);
+    }
+    else
+    {
+        // Unreasonably dim. Ideally this should leverage GetAllPhysicalMonitors to tell the user
+        // the capabilities of their monitors, or if no monitors are found where the brightness
+        // can be programmatically set.
+        ShowMessage(IDS_ERROR_USAGE);
     }
 
     return 0;
