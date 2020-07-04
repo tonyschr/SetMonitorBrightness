@@ -116,12 +116,13 @@ void SetBrightnessForAllMonitors(DWORD newBrightness)
     std::vector<PHYSICAL_MONITOR_INFO> physicalMonitorInfos = GetAllPhysicalMonitors();
     for (const auto& physicalMonitorInfo : physicalMonitorInfos)
     {
-        DebugLog(L"Monitor=%s, minBrightness=%d, maxBrightness=%d, currentBrightness=%d",
-            physicalMonitorInfo.description.c_str(), 
-            physicalMonitorInfo.minimumBrightness, 
-            physicalMonitorInfo.maximumBrightness, 
-            physicalMonitorInfo.currentBrightness);
-        SetMonitorBrightness(physicalMonitorInfo.hPhysicalMonitor, newBrightness);
+        BOOL succeeded = SetMonitorBrightness(physicalMonitorInfo.hPhysicalMonitor, newBrightness);
+        DebugLog(L"Monitor=%s, minBrightness=%d, maxBrightness=%d, currentBrightness=%d, succeeded=%d",
+            physicalMonitorInfo.description.c_str(),
+            physicalMonitorInfo.minimumBrightness,
+            physicalMonitorInfo.maximumBrightness,
+            physicalMonitorInfo.currentBrightness,
+            succeeded);
     }
 }
 
